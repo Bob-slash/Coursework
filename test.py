@@ -1,138 +1,425 @@
 """
-6.101 Lab 4: 
-Snekoban Game Test Cases
+6.101 Lab 9:
+Autocomplete
 """
 
 #!/usr/bin/env python3
-import os
-import sys
-import copy
+import pytest
+import os.path
+import lab
 import json
+import types
 import pickle
 
-import lab
-
+import sys
 sys.setrecursionlimit(10000)
 
-import pytest
 
 TEST_DIRECTORY = os.path.dirname(__file__)
 
-def compare_boards(your_board, expected_board):
-    if len(your_board) != len(expected_board):
-        return f"board had wrong size"
-    for rn, (your_row, expected_row) in enumerate(zip(your_board, expected_board)):
-        if len(your_row) != len(expected_row):
-            return  f"row {rn} had wrong size"
-        for cn, (your_cell, expected_cell) in enumerate(zip(your_row, expected_row)):
-            if sorted(your_cell) != sorted(expected_cell):
-                return f"objects at location ({rn},{cn}) don't match"
+# convert prefix tree into a dictionary...
 
 
-def compare_simulation(filename):
-    with open(os.path.join(TEST_DIRECTORY, "test_levels", f"{filename}.json")) as f:
-        level = json.load(f)
-    with open(os.path.join(TEST_DIRECTORY, "test_inputs", f"{filename}.txt")) as f:
-        inputs = f.read().strip().splitlines(False)
-    with open(os.path.join(TEST_DIRECTORY, "test_outputs", f"{filename}.pickle"), "rb") as f:
-        outputs = pickle.load(f)
-    assert len(inputs) == len(outputs) != 0
+def dictify(t):
+    assert set(t.__dict__) == {
+        'value', 'children'}, "PrefixTree instances should only contain the two instance attributes mentioned in the lab writeup."
+    out = {'value': t.value, 'children': {}}
+    for ch, child in t.children.items():
+        out['children'][ch] = dictify(child)
+    return out
 
-    game = lab.new_game(copy.deepcopy(level))
-    err_msg = compare_boards(lab.dump_game(game), level)
-    if err_msg is not None:
-        assert False, f"Unexpected results at setup: {err_msg}"
-    for ix, (direction, (exp_dump, exp_win)) in enumerate(zip(inputs, outputs)):
-        original_game = copy.deepcopy(game)
-        new_game = lab.step_game(game, direction)
-        assert original_game == game, "be careful not to modify the input game!"
-        game = new_game
-        err_msg = compare_boards(lab.dump_game(game), exp_dump)
-        if err_msg is not None:
-            original_dump = json.dumps(lab.dump_game(original_game))
-            assert False, f"Unexpected results in step {ix}, moving {direction} starting from the following board ({err_msg}):\n\n{original_dump}\n\nYou can copy/paste this representation into the GUI to test."
-        original_game = copy.deepcopy(game)
-        original_dump = json.dumps(lab.dump_game(original_game))
-        win = lab.victory_check(game)
-        assert original_game == game, "be careful not to modify the input game!"
-        assert lab.victory_check(game) == exp_win, f"Incorrect victory check in step {ix} for the following board (expected {exp_win}):\n\n{original_dump}\n\nYou can copy/paste this representation into the GUI to test."
-
-unit_test_cases = [
-    i.rsplit(".", 1)[0]
-    for i in sorted(os.listdir(os.path.join(TEST_DIRECTORY, "test_levels")))
-]
-unit_test_cases = filter(lambda x: x[:len("unit_")] == "unit_",unit_test_cases)
-print(unit_test_cases)
-@pytest.mark.parametrize('test', unit_test_cases)
-def test_units(test):
-    compare_simulation(test)
+# ...and back
 
 
-@pytest.mark.parametrize('test_num', range(12))
-def test_win(test_num):
-    compare_simulation('win_%04d' % test_num)
+def from_dict(d):
+    t = lab.PrefixTree()
+    for k, v in d.items():
+        t[k] = v
+    return t
+
+# make sure the keys are not explicitly stored in any node
 
 
-@pytest.mark.parametrize('test_group', range(10))
-def test_random(test_group):
-    for i in range(10):
-        compare_simulation('random_%04d' % (test_group*10 + i))
+def any_key_stored(tree, keys):
+    keys = [tuple(k) for k in keys]
+    for i in dir(tree):
+        try:
+            val = tuple(getattr(tree, i))
+        except:
+            continue
+        for j in keys:
+            if j == val:
+                return repr(i), repr(j)
+    for child in tree.children:
+        if len(child) != 1:
+            return repr(child), repr(child)
+    for child in tree.children.values():
+        key_stored = any_key_stored(child, keys)
+        if key_stored:
+            return key_stored
+    return None
+
+# read in expected result
 
 
-SOLVER_TEST_GROUPS = {
-    'small': ['m1_044', 'm1_001', 'm1_009', 'm2_002', 'm1_021', 'm2_007', 'm1_014', 'm1_056', 'm1_002', 'm1_015', 't_001', 't_002'],
-    'small2': ['m1_046', 'm2_011', 'm1_023', 'm1_003', 'm2_001', 'm2_006', 'm1_027', 'm2_005', 'm1_012', 'm1_019'],
-    'small3': ['m1_051', 'm1_028', 'm1_024', 'm2_003', 'm2_010', 'm1_154', 'm1_067', 'm1_057', 'm1_055', 'm1_008'],
-    'small4': ['m1_050', 'm1_011', 'm1_038', 'm1_020', 'm1_010', 'm1_030', 'm1_018', 'm1_063', 'm1_017', 'm2_020'],
-    'small5': ['m1_039', 'm2_004', 'm2_017', 'm2_009', 'm1_031', 'm2_041', 'm1_032', 'm1_022', 'm1_047', 'm1_040'],
-    'small6': ['m2_021', 'm1_029', 'm2_015', 'm2_022', 'm1_045', 'm1_025', 'm2_014', 'm2_039', 'm1_058', 'm1_082'],
-    'small7': ['m2_018', 'm1_026', 'm2_008', 'm2_056', 'm1_013', 'm2_019', 'm2_053', 'm1_042', 'm1_004', 'm2_028', 'm2_024', 'm1_068', 'm2_029', 'm1_079', 'm2_052', 'm2_023', 'm1_041'],
-    'medium': ['m1_061', 'm1_037', 'm1_071', 'm1_043', 'm1_033', 'm1_155', 'm2_133', 'm1_053', 'm2_013', 'm2_040'],
-    'medium2': ['m1_081', 'm2_036', 'm2_016', 'm2_042', 'm2_038', 'm1_091', 'm1_104', 'm1_103', 'm1_006', 'm2_012'],
-    'medium3': ['m2_033', 'm1_048', 'm1_119', 'm2_132', 'm1_073', 'm2_037', 'm2_025', 'm2_059', 'm2_049', 'm1_016'],
-    'large': ['m2_089', 'm2_134'],
-}
-
-SOLUTION_LENGTHS = {
-    'small': [1, 33, 30, 27, 17, 47, 51, 23, 16, 37, None, 0],
-    'small2': [47, 39, 56, 41, 44, 55, 50, 61, 49, 41],
-    'small3': [34, 33, 35, 46, 23, 429, 37, 60, 64, 97],
-    'small4': [76, 78, 37, 50, 89, 21, 71, 101, 25, 46],
-    'small5': [85, 61, 40, 32, 17, 77, 35, 47, 83, 20],
-    'small6': [106, 104, 40, 94, 45, 29, 29, 76, 44, 52],
-    'small7': [71, 41, 40, 89, 52, 75, 65, 47, 23, 42, 139, 98, 51, 48, 46, 120, 50],
-    'medium': [100, 71, 120, 61, 41, 282, 618, 37, 75, 49],
-    'medium2': [46, 83, 80, 107, 79, 45, 79, 35, 107, 87],
-    'medium3': [98, 64, 131, 487, 102, 122, 34, 107, 30, 100],
-    'large': [67, 5037]
-}
+def read_expected(fname):
+    with open(os.path.join(TEST_DIRECTORY, 'testing_data', fname), 'rb') as f:
+        return pickle.load(f)
 
 
-def compare_solution(filename, solution):
-    with open(os.path.join(TEST_DIRECTORY, "puzzles", f"{filename}.json")) as f:
-        level = json.load(f)
+def test_set():
+    t = lab.PrefixTree()
+    t['cat'] = 'kitten'
+    t['car'] = 'tricycle'
+    t['carpet'] = 'rug'
+    expect = read_expected('1.pickle')
+    assert dictify(t) == expect, "Your prefix tree is incorrect."
+    assert any_key_stored(t, ('cat', 'car', 'carpet')) is None
 
-    game = lab.new_game(level)
-    for ix, direction in enumerate(solution):
-        game = lab.step_game(game, direction)
-        if ix != len(solution) - 1:
-            assert not lab.victory_check(game)
-    assert lab.victory_check(game)
+    t = lab.PrefixTree()
+    t['a'] = 1
+    t['an'] = 1
+    t['ant'] = 0
+    t['anteater'] = 1
+    t['ants'] = 1
+    t['a'] = 2
+    t['an'] = 2
+    t['a'] = 3
+    expect = read_expected('2.pickle')
+    assert dictify(t) == expect, "Your prefix tree is incorrect."
+    assert any_key_stored(t, ('an', 'ant', 'anteater', 'ants')) is None
+    with pytest.raises(TypeError):
+        t[(1, 2, 3)] = 20
+
+    t = lab.PrefixTree()
+    t['man'] = ''
+    t['mat'] = 'object'
+    t['mattress'] = ()
+    t['map'] = 'pam'
+    t['me'] = 'you'
+    t['met'] = 'tem'
+    t['a'] = '?'
+    t['map'] = -1000
+    expect = read_expected('3.pickle')
+    assert dictify(t) == expect, "Your prefix tree is incorrect."
+    assert any_key_stored(t, ('man', 'mat', 'mattress',
+                          'map', 'me', 'met', 'map')) is None
+    with pytest.raises(TypeError):
+        t['something',] = 'pam'
 
 
-@pytest.mark.parametrize('test_group', list(SOLVER_TEST_GROUPS))
-def test_solver(test_group):
-    assert len(SOLVER_TEST_GROUPS[test_group]) == len(SOLUTION_LENGTHS[test_group])
-    for puzzle, elen in zip(SOLVER_TEST_GROUPS[test_group], SOLUTION_LENGTHS[test_group]):
-        with open(os.path.join(TEST_DIRECTORY, "puzzles", f"{puzzle}.json")) as f:
-            level = json.load(f)
-        result = lab.solve_puzzle(lab.new_game(level))
-        if elen is None:
-            assert result is None, f"Expected no solution for {puzzle}, but got one."
+def test_get():
+    d = {'name': 'John', 'favorite_numbers': [
+        2, 4, 3], 'age': 39, 'children': 0}
+    t = from_dict(d)
+    assert dictify(t) == read_expected('person.pickle')
+    assert all(t[k] == d[k] for k in d)
+    assert any_key_stored(t, tuple(d)) is None
+
+    c = {'make': 'Toyota', 'model': 'Corolla',
+         'year': 2006, 'color': 'beige', 'storage space': ''}
+    t = from_dict(c)
+    assert dictify(t) == read_expected('car.pickle')
+    assert all(t[k] == c[k] for k in c)
+    assert any_key_stored(t, tuple(c)) is None
+    for i in ('these', 'keys', 'dont', 'exist'):
+        with pytest.raises(KeyError):
+            x = t[i]
+    with pytest.raises(TypeError):
+        x = t[(1, 2, 3)]
+
+
+def test_contains():
+    d = {'name': 'John', 'favorite_numbers': [
+        2, 4, 3], 'age': 39, 'children': 0}
+    t = from_dict(d)
+    assert dictify(t) == read_expected('person.pickle')
+    assert all(i in t for i in d)
+    with pytest.raises(TypeError):
+        (1, 2, 3) in t
+
+    c = {'make': 'Toyota', 'model': 'Corolla',
+         'year': 2006, 'color': 'beige', 'storage space': ''}
+    t = from_dict(c)
+    assert dictify(t) == read_expected('car.pickle')
+    assert all(i in t for i in c)
+    badkeys = ('these', 'keys', 'dont', 'exist', 'm', 'ma', 'mak', 'mo',
+               'mod', 'mode', 'ye', 'yea', 'y', '', 'car.pickle')
+    assert all(i not in t for i in badkeys)
+
+
+def test_iter():
+    t = lab.PrefixTree()
+    t['man'] = ''
+    t['mat'] = 'object'
+    t['mattress'] = ()
+    t['map'] = 'pam'
+    t['me'] = 'you'
+    t['met'] = 'tem'
+    t['a'] = '?'
+    t['map'] = -1000
+    assert isinstance(
+        iter(t), types.GeneratorType), "__iter__ must produce a generator"
+    expected = [('a', '?'), ('man', ''), ('map', -1000), ('mat', 'object'),
+                ('mattress', ()), ('me', 'you'), ('met', 'tem')]
+    assert sorted(list(t)) == expected
+
+
+def test_delete():
+    c = {'make': 'Toyota', 'model': 'Corolla',
+         'year': 2006, 'color': 'beige', 'storage space': ''}
+    t = from_dict(c)
+    assert dictify(t) == read_expected('car.pickle')
+    del t['color']
+    assert isinstance(
+        iter(t), types.GeneratorType), "__iter__ must produce a generator"
+    with pytest.raises(KeyError):
+        del t['color']  # can't delete again
+    assert set(t) == set(c.items()) - {('color', 'beige')}
+    t['color'] = 'silver'  # new paint job
+    for i in t:
+        if i[0] != 'color':
+            assert i in c.items()
         else:
-            assert result is not None, f"Expected a solution for {puzzle}, got None."
-            assert len(result) == elen, f"Expected a solution of length {elen} for {puzzle}, got {len(result)}."
-            compare_solution(puzzle, result)
+            assert i[1] == 'silver'
+
+    for i in ('cat', 'dog', 'ferret', 'tomato'):
+        with pytest.raises(KeyError):
+            del t[i]
+
+    with pytest.raises(TypeError):
+        del t[1, 2, 3]
+
+    t = lab.PrefixTree()
+    t['man'] = ''
+    t['mat'] = 'object'
+    t['mattress'] = ()
+    t['map'] = 'pam'
+    t['me'] = 'you'
+    t['met'] = 'tem'
+    t['a'] = '?'
+    t['map'] = -1000
+    assert isinstance(
+        iter(t), types.GeneratorType), "__iter__ must produce a generator"
+    expected = [('a', '?'), ('man', ''), ('map', -1000), ('mat', 'object'),
+                ('mattress', ()), ('me', 'you'), ('met', 'tem')]
+    assert sorted(list(t)) == expected
+    del t['mat']
+    expected = [('a', '?'), ('man', ''), ('map', -1000),
+                ('mattress', ()), ('me', 'you'), ('met', 'tem')]
+    assert sorted(list(t)) == expected
+
+
+def test_word_frequencies():
+    # small test
+    l = lab.word_frequencies(
+        'toonces was a cat who could drive a car very fast until he crashed.')
+    assert dictify(l) == read_expected('6.pickle')
+
+    l = lab.word_frequencies('a man at the market murmered that he had met a mermaid. '
+                             'mark didnt believe the man had met a mermaid.')
+    assert dictify(l) == read_expected('7.pickle')
+
+    l = lab.word_frequencies(
+        'what happened to the cat who had eaten the ball of yarn?  she had mittens!')
+    assert dictify(l) == read_expected('8.pickle')
+
+
+@pytest.mark.parametrize('bigtext', ['holmes', 'earnest', 'frankenstein'])
+def test_big_corpora(bigtext):
+    with open(os.path.join(TEST_DIRECTORY, 'testing_data', '%s.txt' % bigtext), encoding='utf-8') as f:
+        text = f.read()
+        w = lab.word_frequencies(text)
+
+        w_e = read_expected('%s_words.pickle' % bigtext)
+
+        assert w_e == dictify(
+            w), 'word frequencies prefix tree does not match for %s' % bigtext
+
+
+def test_autocomplete_small():
+    # Autocomplete on simple prefix trees with less than N valid words
+    t = lab.word_frequencies("cat car carpet")
+    result = lab.autocomplete(t, 'car', 3)
+    assert set(result) == {"car", "carpet"}
+
+    t = lab.word_frequencies("a an ant anteater a an ant a")
+    result = lab.autocomplete(t, 'a', 2)
+    assert set(result) in [{"a", "an"}, {"a", "ant"}]
+
+    t = lab.word_frequencies(
+        "man mat mattress map me met a man a a a map man met")
+    result = lab.autocomplete(t, 'm', 3)
+    assert set(result) == {"man", "map", "met"}
+
+    t = lab.word_frequencies("hello hell history")
+    result = lab.autocomplete(t, 'help', 3)
+    assert result == []
+    with pytest.raises(TypeError):
+        result = lab.autocomplete(t, ('tuple', ), None)
+
+
+def test_autocomplete_big_1():
+    alphabet = a = "abcdefghijklmnopqrstuvwxyz"
+
+    word_list = ["aa" + l1 + l2 + l3 +
+                 l4 for l1 in a for l2 in a for l3 in a for l4 in a]
+    word_list.extend(["apple", "application", "apple",
+                     "apricot", "apricot", "apple"])
+    word_list.append("bruteforceisbad")
+
+    t = lab.word_frequencies(' '.join(word_list))
+    for i in range(50_000):
+        result1 = lab.autocomplete(t, 'ap', 1)
+        result2 = lab.autocomplete(t, 'ap', 2)
+        result3 = lab.autocomplete(t, 'ap', 3)
+        result4 = lab.autocomplete(t, 'ap')
+        result5 = lab.autocomplete(t, 'b')
+
+        assert set(result1) == {'apple'}
+        assert set(result2) == {'apple', 'apricot'}
+        assert set(result4) == set(result3) == {
+            'apple', 'apricot', 'application'}
+        assert set(result5) == {'bruteforceisbad'}
+
+
+def test_autocomplete_big_2():
+    nums = {'t': [0, 1, 25, None],
+            'th': [0, 1, 21, None],
+            'the': [0, 5, 21, None],
+            'thes': [0, 1, 21, None]}
+    with open(os.path.join(TEST_DIRECTORY, 'testing_data', 'frankenstein.txt'), encoding='utf-8') as f:
+        text = f.read()
+    w = lab.word_frequencies(text)
+    for i in sorted(nums):
+        for n in nums[i]:
+            result = lab.autocomplete(w, i, n)
+            expected = read_expected(
+                'frank_autocomplete_%s_%s.pickle' % (i, n))
+            assert len(expected) == len(result), ('missing' if len(result) < len(
+                expected) else 'too many') + ' autocomplete results for ' + repr(i) + ' with maxcount = ' + str(n)
+            assert set(expected) == set(result), 'autocomplete included ' + repr(set(result) - set(expected)) + \
+                ' instead of ' + repr(set(expected) - set(result)) + \
+                ' for ' + repr(i) + ' with maxcount = '+str(n)
+    with pytest.raises(TypeError):
+        result = lab.autocomplete(w, ('tuple', ), None)
+
+
+def test_autocomplete_big_3():
+    with open(os.path.join(TEST_DIRECTORY, 'testing_data', 'frankenstein.txt'), encoding='utf-8') as f:
+        text = f.read()
+    w = lab.word_frequencies(text)
+    the_word = 'accompany'
+    for ix in range(len(the_word)+1):
+        test = the_word[:ix]
+        result = lab.autocomplete(w, test)
+        expected = read_expected(
+            'frank_autocomplete_%s_%s.pickle' % (test, None))
+        assert len(expected) == len(result), ('missing' if len(result) < len(
+            expected) else 'too many') + ' autocomplete results for ' + repr(test) + ' with maxcount = ' + str(None)
+        assert set(expected) == set(result), 'autocomplete included ' + repr(set(result) - set(expected)) + \
+            ' instead of ' + repr(set(expected) - set(result)) + \
+            ' for ' + repr(test) + ' with maxcount = '+str(None)
+    with pytest.raises(TypeError):
+        result = lab.autocomplete(w, ('tuple', ), None)
+
+
+def test_autocorrect_small():
+    # Autocorrect on cat in small corpus
+    t = lab.word_frequencies(
+        "cats cattle hat car act at chat crate act car act")
+    result = lab.autocorrect(t, 'cat', 4)
+    assert set(result) == {"act", "car", "cats", "cattle"}
+
+
+def test_autocorrect_big():
+    nums = {'thin': [0, 8, 10, None],
+            'tom': [0, 2, 4, None],
+            'mon': [0, 2, 15, 17, 20, None]}
+    with open(os.path.join(TEST_DIRECTORY, 'testing_data', 'frankenstein.txt'), encoding='utf-8') as f:
+        text = f.read()
+    w = lab.word_frequencies(text)
+    for i in sorted(nums):
+        for n in nums[i]:
+            result = lab.autocorrect(w, i, n)
+            expected = read_expected('frank_autocorrect_%s_%s.pickle' % (i, n))
+            assert len(expected) == len(result), ('missing' if len(result) < len(
+                expected) else 'too many') + ' autocorrect results for ' + repr(i) + ' with maxcount = ' + str(n)
+            assert set(expected) == set(result), 'autocorrect included ' + repr(set(result) - set(expected)) + \
+                ' instead of ' + repr(set(expected) - set(result)) + \
+                ' for ' + repr(i) + ' with maxcount = '+str(n)
+
+
+def test_filter_small():
+    # Filter to select all words in prefix tree
+    t = lab.word_frequencies(
+        "man mat mattress map me met a man a a a map man met")
+    result = lab.word_filter(t, '*')
+    assert isinstance(result, list)
+    result.sort()
+    assert result == [("a", 4), ("man", 3), ("map", 2),
+                      ("mat", 1), ("mattress", 1), ("me", 1), ("met", 2)]
+
+    # All three-letter words
+    result = lab.word_filter(t, '???')
+    assert isinstance(result, list)
+    result.sort()
+    assert result == [("man", 3), ("map", 2), ("mat", 1), ("met", 2)]
+
+    # Words beginning with 'mat'
+    result = lab.word_filter(t, 'mat*')
+    assert isinstance(result, list)
+    result.sort()
+    assert result == [("mat", 1), ("mattress", 1)]
+
+    # Words beginning with 'm', third letter is t
+    result = lab.word_filter(t, 'm?t*')
+    assert isinstance(result, list)
+    result.sort()
+    assert result == [("mat", 1), ("mattress", 1), ("met", 2)]
+
+    # Words with at least 4 letters
+    result = lab.word_filter(t, '*????')
+    assert isinstance(result, list)
+    result.sort()
+    assert result == [("mattress", 1)]
+
+    # All words
+    result = lab.word_filter(t, '**')
+    assert isinstance(result, list)
+    result.sort()
+    assert result == [("a", 4), ("man", 3), ("map", 2),
+                      ("mat", 1), ("mattress", 1), ("me", 1), ("met", 2)]
+
+
+def test_filter_big_1():
+    alphabet = a = "abcdefghijklmnopqrstuvwxyz"
+
+    word_list = ["aa" + l1 + l2 + l3 +
+                 l4 for l1 in a for l2 in a for l3 in a for l4 in a]
+    word_list.extend(["apple", "application", "apple",
+                     "apricot", "apricot", "apple"])
+    word_list.append("bruteforceisbad")
+
+    t = lab.word_frequencies(' '.join(word_list))
+    for i in range(1000):
+        result = lab.word_filter(t, "ap*")
+        expected = {('apple', 3), ('apricot', 2), ('application', 1)}
+        assert len(expected) == len(result), 'incorrect word_filter of ap*'
+        assert set(expected) == set(result), 'incorrect word_filter of ap*'
+
+
+def test_filter_big_2():
+    patterns = ('*ing', '*ing?', '****ing', '**ing**', '????', 'mon*',
+                '*?*?*?*', '*???')
+    with open(os.path.join(TEST_DIRECTORY, 'testing_data', 'frankenstein.txt'), encoding='utf-8') as f:
+        text = f.read()
+    w = lab.word_frequencies(text)
+    for ix, i in enumerate(patterns):
+        result = lab.word_filter(w, i)
+        expected = read_expected('frank_filter_%s.pickle' % (ix, ))
+        assert len(expected) == len(result), 'incorrect word_filter of %r' % i
+        assert set(expected) == set(result), 'incorrect word_filter of %r' % i
 
 
 if __name__ == "__main__":

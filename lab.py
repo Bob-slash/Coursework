@@ -1,264 +1,328 @@
 """
-6.1010 Lab 4:
-Snekoban Game
+6.101 Lab 9:
+Autocomplete
 """
 
-import json
-import typing
-
 # NO ADDITIONAL IMPORTS!
+import doctest
+from text_tokenize import tokenize_sentences
 
 
-direction_vector = {
-    "up": (-1, 0),
-    "down": (+1, 0),
-    "left": (0, -1),
-    "right": (0, +1),
-}
+class PrefixTree:
+    def __init__(self):
+        self.value = None
+        self.children = {}
+
+    def __setitem__(self, key, value):
+        """
+        Add a key with the given value to the prefix tree,
+        or reassign the associated value if it is already present.
+        Raise a TypeError if the given key is not a string.
+        """
+        # type check
+        if type(key) != str:
+            raise TypeError("Only strings allowed")
+
+        cur_tree = self
+        for i in range(1, len(key) + 1):
+            new_key = key[i-1:i]
+            new_tree = PrefixTree()
+            if new_key not in cur_tree.children:
+                cur_tree.children[new_key] = new_tree
+            cur_tree = cur_tree.children[new_key]
+        cur_tree.value = value
+
+    def __getitem__(self, key):
+        """
+        Return the value for the specified prefix.
+        Raise a KeyError if the given key is not in the prefix tree.
+        Raise a TypeError if the given key is not a string.
+        """
+        if type(key) != str:
+            raise TypeError("Only strings allowed")
+
+        cur_tree = self
+        for i in range(1, len(key) + 1):
+            new_key = key[i-1:i]
+            if new_key not in cur_tree.children:
+                raise KeyError("key not in prefix tree")
+            cur_tree = cur_tree.children[new_key]
+
+        return cur_tree.value
+
+    def get_children(self):
+        return self.children
+
+    def get_value(self):
+        return self.value
+
+    def __delitem__(self, key):
+        """
+        Delete the given key from the prefix tree if it exists.
+        Raise a KeyError if the given key is not in the prefix tree.
+        Raise a TypeError if the given key is not a string.
+        """
+        if type(key) != str:
+            raise TypeError("Only strings allowed")
+        cur_tree = self
+        for i in range(1, len(key)):
+            new_key = key[i-1:i]
+            if new_key not in cur_tree.children:
+                raise KeyError("key not in prefix tree")
+            cur_tree = cur_tree.children[new_key]
+        if cur_tree.children[key[-1]].children:
+            cur_tree.children[key[-1]].value = None
+        else:
+            cur_tree.children.pop(key[-1])
+
+    def __contains__(self, key):
+        """
+        Is key a key in the prefix tree?  Return True or False.
+        Raise a TypeError if the given key is not a string.
+        """
+        if type(key) != str:
+            raise TypeError("Only strings allowed")
+
+        cur_tree = self
+        for letter in key:
+            if letter not in cur_tree.children:
+                return False
+            cur_tree = cur_tree.children[letter]
+        if cur_tree.value == None:
+            return False
+        return True
+
+    def __iter__(self):
+        """
+        Generator of (key, value) pairs for all keys/values in this prefix tree
+        and its children.  Must be a generator!
+        """
+        # for key in cur_tree.children:
+        #     if cur_tree.value != None:
+        #         yield (key, cur_tree.value)
+        #     cur_tree = cur_tree.children[key]
+        visited = set()
+        yet_to_visit = [(None, self)]
+        while yet_to_visit:
+            next_visit = yet_to_visit.pop(0)
+            cur_tree = next_visit[1]
+            cur_letter = next_visit[0]
+            neighbors = cur_tree.get_neighbors()
+            visited.add(cur_tree)
+            for key, neighbor in neighbors:
+                next_key = key
+                if cur_letter != None:
+                    next_key = cur_letter + next_key
+                if neighbor.value != None:
+                    yield (next_key, neighbor.value)
+                yet_to_visit.append((next_key, neighbor))
+
+    def get_neighbors(self):
+        """
+        Given a prefixtree, returns a list of tuples of the shape
+        (key, prefixtree)
+        """
+        output = []
+        for key in self.children:
+            output.append((key, self.children[key]))
+        return output
 
 
-def new_game(level_description):
+def word_frequencies(text):
     """
-    Given a description of a game state, create and return a game
-    representation of your choice.
-
-    The given description is a list of lists of lists of strs, representing the
-    locations of the objects on the board (as described in the lab writeup).
-
-    For example, a valid level_description is:
-
-    [
-        [[], ['wall'], ['computer']],
-        [['target', 'player'], ['computer'], ['target']],
-    ]
-
-    The exact choice of representation is up to you; but note that what you
-    return will be used as input to the other functions.
-
-    Representation:
-    Dictionary: {player position, target positions, computer positions, wall positions}
+    Given a piece of text as a single string, create a prefix tree whose keys
+    are the words in the text, and whose values are the number of times the
+    associated word appears in the text.
     """
-    level = {}
-    level["size"] = (len(level_description), len(level_description[0]))
-    level["targets"] = set()
-    level["computers"] = set()
-    level["walls"] = set()
-    for r in range(len(level_description)):
-        for c in range(len(level_description[0])):
-            if "player" in level_description[r][c]:
-                level["player"] = (r, c)
-            if "target" in level_description[r][c]:
-                level["targets"].add((r, c))
-            if "computer" in level_description[r][c]:
-                level["computers"].add((r, c))
-            if "wall" in level_description[r][c]:
-                level["walls"].add((r, c))
-    return level
+    sentences = tokenize_sentences(text)
+    words = []
+    for sentence in sentences:
+        words += sentence.split()
+    frequencies = {}
+    for word in words:
+        if word not in frequencies:
+            frequencies[word] = 1
+        else:
+            frequencies[word] += 1
+    output = PrefixTree()
+    for key in frequencies:
+        output[key] = frequencies[key]
+    return output
 
 
-def empty_level(game):
+def autocomplete(tree, prefix, max_count=None):
     """
-    Input:
-    game state
+    Return the list of the most-frequently occurring elements that start with
+    the given prefix.  Include only the top max_count elements if max_count is
+    specified, otherwise return all.
 
-    Returns:
-    a 2D list of empty values, the same size as game["level"]
+    Raise a TypeError if the given prefix is not a string.
     """
-    ret_level = []
+    if type(prefix) != str:
+        raise TypeError("Only strings allowed")
+    tree_vals = []
+    cur_tree = tree
+    for letter in prefix:
+        if letter not in cur_tree.children:
+            return []
+        cur_tree = cur_tree.children[letter]
 
-    for r in range(game["size"][0]):
-        ret_level.append([])
-        for c in range(game["size"][1]):
-            ret_level[r].append([])
+    if cur_tree.value != None:
+        tree_vals.append(("", cur_tree.value))
+    for val in cur_tree:
+        tree_vals.append(val)
 
-    return ret_level
+    output = []
+    tree_vals.sort(key=lambda x: x[1], reverse=True)
+    if max_count != None:
+        for val in tree_vals[:max_count]:
+            output.append(prefix + val[0])
+    else:
+        for val in tree_vals:
+            output.append(prefix + val[0])
+    return output
 
 
-def victory_check(game):
+def edit_insert(prefix):
+    alph = "abcdefghijklmnopqrstuvwxyz"
+    output = set()
+    for letter in alph:
+        for i in range(len(prefix) + 1):
+            output.add(prefix[0:i] + letter + prefix[i:])
+    return list(output)
+
+
+def edit_replace(prefix, rep_with=""):
+    alph = "abcdefghijklmnopqrstuvwxyz"
+    output = set()
+    for i in range(len(prefix)):
+        temp = ""
+        for j in range(len(prefix)):
+            if j != i:
+                temp += prefix[j]
+            if rep_with != "" and j == i:
+                temp += rep_with
+        output.add(temp)
+    return list(output)
+
+
+def edit_swap(prefix):
+    alph = "abcdefghijklmnopqrstuvwxyz"
+    output = set()
+    for i in range(len(prefix) - 1):
+        temp_list = [*prefix]
+        temp = temp_list[i]
+        temp_list[i] = temp_list[i + 1]
+        temp_list[i + 1] = temp
+        output.add("".join(temp_list))
+    return list(output)
+
+
+def edit(prefix):
     """
-    Given a game representation (of the form returned from new_game), return
-    a Boolean: True if the given game satisfies the victory condition, and
-    False otherwise.
+    Given a prefix, returns every possible correction to the prefix
+    as a list
     """
-    if game["targets"] == set():
-        return False
-    victory = True
+    alph = "abcdefghijklmnopqrstuvwxyz"
+    output = []
+    output.extend(edit_insert(prefix))
+    output.extend(edit_replace(prefix))
+    for letter in alph:
+        output.extend(edit_replace(prefix, letter))
+    output.extend(edit_swap(prefix))
 
-    for target in game["targets"]:
-        if target not in game["computers"]:
-            victory = False
-    return victory
+    return output
 
 
-def new_position(object, direction):
+def autocorrect(tree, prefix, max_count=None):
     """
-    Input:
-    Takes in a tuple object with two values, the first being an x coordinate
-    and the second being a y coordinate. Also takes in a direction.
-
-    Returns:
-    a new tuple with the coordinates of the object updated to move one space
-    in the direction of direction.
+    Return the list of the most-frequent words that start with prefix or that
+    are valid words that differ from prefix by a small edit.  Include up to
+    max_count elements from the autocompletion.  If autocompletion produces
+    fewer than max_count elements, include the most-frequently-occurring valid
+    edits of the given word as well, up to max_count total elements.
     """
-    row = object[0]
-    col = object[1]
-    if direction == "up":
-        row -= 1
-    elif direction == "down":
-        row += 1
-    elif direction == "left":
-        col -= 1
-    elif direction == "right":
-        col += 1
+    complete = set(autocomplete(tree, prefix, max_count))
+    edits = edit(prefix)
 
-    return (row, col)
+    valid = []
+    for val in edits:
+        if val in tree and val not in complete:
+            valid.append(val)
 
+    tree_vals = []
+    for val in valid:
+        tree_vals.append((val, tree[val]))
 
-def game_copy(game):
-    '''
-    Input:
-    game state
+    tree_vals.sort(key=lambda x: x[1], reverse=True)
+    if max_count != None:
+        count = max_count - len(complete)
+        for i in range(count):
+            complete.add(tree_vals[i][0])
+    else:
+        for val in valid:
+            complete.add(val)
 
-    Returns:
-    a copy of the same game state
-    '''
-    ret = {}
-    ret["size"] = (game["size"][0], game["size"][1])
-    ret["player"] = game["player"]
-    ret["targets"] = game["targets"].copy()
-    ret["computers"] = game["computers"].copy()
-    ret["walls"] = game["walls"].copy()
-    return ret
+    return list(complete)
 
 
-def step_game(game, direction):
+def word_filter(tree, pattern):
     """
-    Given a game representation (of the form returned from new_game), return a
-    new game representation (of that same form), representing the updated game
-    after running one step of the game.  The user's input is given by
-    direction, which is one of the following: {'up', 'down', 'left', 'right'}.
-
-    This function should not mutate its input.
+    Return list of (word, freq) for all words in the given prefix tree that
+    match pattern.  pattern is a string, interpreted as explained below:
+         * matches any sequence of zero or more characters,
+         ? matches any single character,
+         otherwise char in pattern char must equal char in word.
     """
-    ret_game = game_copy(game)
-    can_move = True
-    computer = False
+    if len(pattern) == 0:
+        if tree.value != None:
+            return [("", tree.value)]
+        else:
+            return []
 
-    check_loc = new_position(ret_game["player"], direction)
-    if check_loc in game["walls"]:
-        can_move = False
-    elif check_loc in game["computers"]:
-        computer = True
-        check_loc_two = new_position(check_loc, direction)
-        if check_loc_two in game["walls"] or check_loc_two in game["computers"]:
-            can_move = False
-    if can_move:
-        new_pos = new_position(ret_game["player"], direction)
-        ret_game["player"] = new_pos
-        if computer:
-            for position in ret_game["computers"]:
-                if position == new_pos:
-                    ret_game["computers"].remove(new_pos)
-                    ret_game["computers"].add(new_position(new_pos, direction))
-    return ret_game
+    output = []
 
+    first_letter = pattern[0]
 
-def dump_game(game):
-    """
-    Given a game representation (of the form returned from new_game), convert
-    it back into a level description that would be a suitable input to new_game
-    (a list of lists of lists of strings).
+    if first_letter == "*":
+        all_pattern = word_filter(tree, pattern[1:])
 
-    This function is used by the GUI and the tests to see what your game
-    implementation has done, and it can also serve as a rudimentary way to
-    print out the current state of your game for testing and debugging on your
-    own.
-    """
-    ret_level = empty_level(game)
-    for r in range(game["size"][0]):
-        for c in range(game["size"][1]):
-            if (r, c) in game["walls"]:
-                ret_level[r][c].append("wall")
-            if (r, c) in game["targets"]:
-                ret_level[r][c].append("target")
-            if (r, c) in game["computers"]:
-                ret_level[r][c].append("computer")
-            if (r, c) == game["player"]:
-                ret_level[r][c].append("player")
-    return ret_level
+        for val in all_pattern:
+            output.append((val[0], val[1]))
 
+        for cur_tree in tree.children:
+            new_tree = tree.children[cur_tree]
+            all_pattern = word_filter(new_tree, pattern)
 
-def equal_states(game_one, game_two):
-    '''
-    Input:
-    two game states
+            for val in all_pattern:
+                new_val = (cur_tree + val[0], val[1])
+                output.append(new_val)
 
-    Returns:
-    a boolean that is True if both game states are the same and false if 
-    the game states are not.
-    '''
-    return game_one["size"] == game_two["size"] and game_one["player"] == game_two["player"] and game_one["targets"] == game_two["targets"] and game_one["computers"] == game_two["computers"] and game_one["walls"] == game_two["walls"]
+    elif first_letter == "?":
+        for cur_tree in tree.children:
+            new_tree = tree.children[cur_tree]
+            all_pattern = word_filter(new_tree, pattern[1:])
+
+            for val in all_pattern:
+                new_val = (cur_tree + val[0], val[1])
+                output.append(new_val)
+
+    else:
+        if first_letter in tree.children:
+            new_tree = tree.children[first_letter]
+            all_pattern = word_filter(new_tree, pattern[1:])
+
+            for val in all_pattern:
+                new_val = (first_letter + val[0], val[1])
+                output.append(new_val)
+
+    output = set(output)
+    output = list(output)
+    return output
 
 
-def get_neighboring_states(game):
-    '''
-    Input:
-    a game state
-
-    Returns:
-    a list of possible game states that could result from moving the player
-    up, fight, down, or left.
-    '''
-    ret_states = []
-    step_up = step_game(game, "up")
-    if not equal_states(step_up, game):
-        ret_states.append((step_up, "up"))
-
-    step_right = step_game(game, "right")
-    if not equal_states(step_right, game):
-        ret_states.append((step_right, "right"))
-
-    step_down = step_game(game, "down")
-    if not equal_states(step_down, game):
-        ret_states.append((step_down, "down"))
-
-    step_left = step_game(game, "left")
-    if not equal_states(step_left, game):
-        ret_states.append((step_left, "left"))
-
-    return ret_states
-
-
-def solve_puzzle(game):
-    """
-    Given a game representation (of the form returned from new game), find a
-    solution.
-
-    Return a list of strings representing the shortest sequence of moves ("up",
-    "down", "left", and "right") needed to reach the victory condition.
-
-    If the given level cannot be solved, return None.
-    """
-    if victory_check(game):
-        return []
-    visited = {(tuple(game["player"]), tuple(game["computers"]))}
-    possible_state_paths = [[game]]
-    direction_paths = [[]]
-    while direction_paths:
-        current_path = possible_state_paths.pop(0)
-        direct_path = direction_paths.pop(0)
-        neighbors = get_neighboring_states(current_path[len(current_path) - 1])
-        for state, direction in neighbors:
-            if (tuple(state["player"]), tuple(state["computers"])) not in visited and not victory_check(state):
-                possible_state_paths.append(
-                    current_path + [state])
-                direction_paths.append(direct_path + [direction])
-                visited.add((tuple(state["player"]),
-                            tuple(state["computers"])))
-            elif victory_check(state):
-                return direct_path + [direction]
-    return None
-
-
+# you can include test cases of your own in the block below.
 if __name__ == "__main__":
-    pass
+    doctest.testmod()
+    with open("dracula.txt", encoding="utf-8") as f:
+        text = f.read()
